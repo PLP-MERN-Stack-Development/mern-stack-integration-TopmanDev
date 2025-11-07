@@ -1,4 +1,4 @@
-// server.js - Main server file for the MERN blog application
+// server.js - Main server file for the Topman blog application
 
 // Import required modules
 const express = require('express');

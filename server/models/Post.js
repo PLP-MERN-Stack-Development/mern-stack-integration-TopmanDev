@@ -20,8 +20,6 @@ const PostSchema = new mongoose.Schema(
     },
     slug: {
       type: String,
-      required: true,
-      unique: true,
     },
     excerpt: {
       type: String,
@@ -56,6 +54,18 @@ const PostSchema = new mongoose.Schema(
           type: String,
           required: true,
         },
+        reactions: [
+          {
+            user: {
+              type: mongoose.Schema.Types.ObjectId,
+              ref: 'User',
+            },
+            emoji: {
+              type: String,
+              required: true,
+            },
+          },
+        ],
         createdAt: {
           type: Date,
           default: Date.now,
@@ -66,17 +76,34 @@ const PostSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Create compound unique index - user cannot create posts with the same slug
+PostSchema.index({ slug: 1, author: 1 }, { unique: true });
+
 // Create slug from title before saving
 PostSchema.pre('save', function (next) {
-  if (!this.isModified('title')) {
-    return next();
+  // Generate slug if it doesn't exist or title is modified
+  if (!this.slug || this.isModified('title')) {
+    this.slug = this.title
+      .toLowerCase()
+      .replace(/[^\w ]+/g, '')
+      .replace(/ +/g, '-');
   }
   
-  this.slug = this.title
-    .toLowerCase()
-    .replace(/[^\w ]+/g, '')
-    .replace(/ +/g, '-');
-    
+  next();
+});
+
+// Also handle slug generation for findOneAndUpdate
+PostSchema.pre('findOneAndUpdate', function (next) {
+  const update = this.getUpdate();
+  
+  if (update.title) {
+    update.slug = update.title
+      .toLowerCase()
+      .replace(/[^\w ]+/g, '')
+      .replace(/ +/g, '-');
+    this.setUpdate(update);
+  }
+  
   next();
 });
 
@@ -87,7 +114,35 @@ PostSchema.virtual('url').get(function () {
 
 // Method to add a comment
 PostSchema.methods.addComment = function (userId, content) {
-  this.comments.push({ user: userId, content });
+  this.comments.push({ user: userId, content, reactions: [] });
+  return this.save();
+};
+
+// Method to add reaction to a comment
+PostSchema.methods.addReaction = function (commentId, userId, emoji) {
+  const comment = this.comments.id(commentId);
+  if (!comment) {
+    throw new Error('Comment not found');
+  }
+  
+  // Check if user already reacted with this emoji
+  const existingReaction = comment.reactions.find(
+    (r) => r.user.toString() === userId.toString() && r.emoji === emoji
+  );
+  
+  if (existingReaction) {
+    // Remove reaction if already exists (toggle)
+    comment.reactions = comment.reactions.filter(
+      (r) => !(r.user.toString() === userId.toString() && r.emoji === emoji)
+    );
+  } else {
+    // Remove any other reaction from this user and add new one
+    comment.reactions = comment.reactions.filter(
+      (r) => r.user.toString() !== userId.toString()
+    );
+    comment.reactions.push({ user: userId, emoji });
+  }
+  
   return this.save();
 };
 
